@@ -4,7 +4,7 @@ A Tampermonkey userscript for collecting songs from an artist's YouTube Music ca
 
 The script runs inside your signed-in YouTube Music browser session. It requires no separate YouTube Data API key, Google Cloud project, local server, or build step. It uses YouTube Music's internal web endpoints, which may change without notice or impose request limits.
 
-The current script version is **3.0.4**. The source filename still contains `2.0`; the `@version` field inside the file identifies the actual version. The script interface and its messages are currently in Ukrainian. English explanations of the controls are provided below.
+The current script version is **3.1.0**. The source filename still contains `2.0`; the `@version` field inside the file identifies the actual version. English is the default interface language. Use the **Language / Мова** selector in the panel to switch between English and Ukrainian. The selection is saved in local browser storage on music.youtube.com. If storage is unavailable, switching still works for the current page. Buttons, status messages, script-generated errors, and existing activity-log entries update immediately, including during collection or addition. Artist names, song titles, and error text supplied by the browser or YouTube are not translated.
 
 ## Requirements
 
@@ -20,7 +20,7 @@ The script has been used successfully in Firefox with Tampermonkey during develo
 2. Open [the userscript in this repository](<YouTube Music Bulk Add to Playlist Pro-2.0.user.js>). On GitHub, select **Raw** and copy the entire source, including the metadata block beginning with `// ==UserScript==` and the final `})();`.
 3. Open the Tampermonkey dashboard and create a new script. Replace the entire editor template with the copied source, then save it using the editor's Save command or `Ctrl+S`. This follows Tampermonkey's [manual installation workflow](https://www.tampermonkey.net/faq.php?locale=en&q=Q102).
 4. Check that the script is enabled in the dashboard. If an earlier copy is installed separately, disable it so that only one copy runs.
-5. Open or reload `https://music.youtube.com/`. A red button labelled **ДОДАТИ ВСЕ В ПЛЕЙЛИСТ** should appear near the upper-right corner. Click it to open the panel. **Alt+Shift+P** also opens the panel when the script is running.
+5. Open or reload `https://music.youtube.com/`. A red button labelled **ADD ALL TO PLAYLIST** should appear near the upper-right corner. Click it to open the panel. **Alt+Shift+P** also opens the panel when the script is running.
 
 In Chromium-based browsers, userscript execution may require enabling **Allow User Scripts** in the extension's browser settings, or Developer Mode on older versions. See [Tampermonkey's execution-permission instructions](https://www.tampermonkey.net/faq.php?locale=en&q=Q209). This is separate from enabling the individual script in the dashboard.
 
@@ -40,7 +40,7 @@ The other-editions checkbox is enabled by default. Leave it selected to follow t
 
 ### Collect and review
 
-Click **1. Зібрати пісні** (Collect songs). The script resolves the artist ID, reads every returned page of the destination playlist, and collects tracks from the artist's catalog. You do not need to scroll the page or open the albums manually. Collection does not modify the playlist.
+Click **1. Collect songs**. The script resolves the artist ID, reads every returned page of the destination playlist, and collects tracks from the artist's catalog. You do not need to scroll the page or open the albums manually. Collection does not modify the playlist.
 
 When collection finishes, the panel shows the artist, destination, total number of unique collected track IDs, number already present, and number of new tracks. The preview displays the first 100 new tracks. There are no individual selection controls: the Add button submits all new tracks in the collected result.
 
@@ -50,29 +50,30 @@ Changing the destination or the other-editions option clears the collected plan.
 
 ### Add songs
 
-Click **2. Додати N пісень** (Add N songs). Before writing, the script reads the destination again to exclude tracks added since collection. It submits the remaining tracks in batches of up to 25, checks the server's acknowledgements, and reads the playlist again to verify that the submitted IDs are present.
+Click **2. Add songs: N**. Before writing, the script reads the destination again to exclude tracks added since collection. It submits the remaining tracks in batches of up to 25, checks the server's acknowledgements, and reads the playlist again to verify that the submitted IDs are present.
 
 Keep the tab open and remain signed in while it runs. The final success message is shown only after verification. Open or refresh the destination playlist to see the changes. If no new tracks were found, the Add button remains disabled.
 
 ### Stop or recover from an interruption
 
-Click **Зупинити** (Stop) to prevent further requests. An in-flight request is allowed to finish, so a batch already submitted may still be added. Stopping does not undo completed additions.
+Click **Stop** to prevent further requests. An in-flight request is allowed to finish, so a batch already submitted may still be added. Stopping does not undo completed additions.
 
 After an error, interruption, or page reload, return to the artist page, check the destination, and collect again. The new scan excludes IDs already present. A failed write is not retried automatically because the server may have accepted it even if the response was lost. Progress is not saved across reloads, and there is no automatic rollback.
 
 ### Interface reference
 
-| Displayed control | Meaning |
+| English control | Meaning |
 | --- | --- |
-| ДОДАТИ ВСЕ В ПЛЕЙЛИСТ | Open or close the bulk-add panel |
-| Плейлист: посилання або ID | Destination playlist URL or ID |
-| Також інші видання альбомів | Include other album editions |
-| 1. Зібрати пісні | Collect songs and check for existing IDs |
-| 2. Додати N пісень | Add the new tracks from the collected plan |
-| Зупинити | Stop after the current request |
-| Відкрити цільовий плейлист | Open the selected destination playlist |
-| Зберегти список JSON | Download the collected catalog and log |
-| Журнал | Expand the activity log |
+| Language / Мова | Switch between English and Ukrainian |
+| ADD ALL TO PLAYLIST | Open or close the bulk-add panel |
+| Playlist URL or ID | Destination playlist URL or ID |
+| Include other album editions | Include other album editions |
+| 1. Collect songs | Collect songs and check for existing IDs |
+| 2. Add songs: N | Add the new tracks from the collected plan |
+| Stop | Stop after the current request |
+| Open destination playlist | Open the selected destination playlist |
+| Export song list as JSON | Download the collected catalog and log |
+| Activity log | Expand the activity log |
 
 ## Catalog coverage and duplicate detection
 
@@ -90,7 +91,7 @@ Tracks are submitted in order of first discovery. The script does not sort exist
 
 ### The button does not appear
 
-Confirm that you are on `music.youtube.com`, that Tampermonkey is allowed to run there, and that the script is enabled. Reload the page after installation or an update. Try **Alt+Shift+P**. In Firefox, open the web console with **Ctrl+Shift+K** and look for `[YTM Bulk Add 3.0.4]` or an error referring to the userscript. The startup message indicates that panel initialization completed; it does not confirm that catalog requests will succeed.
+Confirm that you are on `music.youtube.com`, that Tampermonkey is allowed to run there, and that the script is enabled. Reload the page after installation or an update. Try **Alt+Shift+P**. In Firefox, open the web console with **Ctrl+Shift+K** and look for `[YTM Bulk Add 3.1.0]` or an error referring to the userscript. The startup message indicates that panel initialization completed; it does not confirm that catalog requests will succeed.
 
 ### The artist cannot be recognized or no songs are found
 
@@ -100,7 +101,7 @@ Open the artist's main page through YouTube Music search and collect again. A wa
 
 Verify that the destination is a regular `PL…` playlist and that you can manually add a song to it using the current account or channel profile. For missing-session messages or HTTP 401/403 responses, check your sign-in state and editing permissions, then reload the page. A missing-configuration message means the script could not access the page's YouTube Music configuration.
 
-Version 3.0.4 handles an empty playlist when its recognized track-list response omits the item array. Other response layouts can still fail. If an empty test playlist produces a missing-items error, adding one song manually and scanning again is a practical workaround observed during development.
+The script handles an empty playlist when its recognized track-list response omits the item array. Other response layouts can still fail. If an empty test playlist produces a missing-items error, adding one song manually and scanning again is a practical workaround observed during development.
 
 ### Rate limits, unexpected responses, or incomplete verification
 
@@ -118,13 +119,14 @@ There are no runtime packages to install or assets to build. If Node.js is avail
 
 ```sh
 node --check 'YouTube Music Bulk Add to Playlist Pro-2.0.user.js'
+node tests/youtube-music-bulk-add.test.cjs
 ```
 
-A syntax check does not verify live YouTube Music compatibility. This repository currently does not include the development test suite.
+A syntax check does not verify live YouTube Music compatibility. The included tests use simulated browser and server responses to check collection, pagination, duplicate handling, writes, language switching, and preference storage. They do not access a live YouTube account.
 
 ## Session data and implementation
 
-Requests go to `/youtubei/v1/` on `music.youtube.com` using the current browser session. The script reads session cookies locally to construct its authentication header. It does not send data to a separate service or include authentication credentials in its JSON export. Collection results and the log are held in memory until the page is reloaded, unless you download an export.
+Requests go to `/youtubei/v1/` on `music.youtube.com` using the current browser session. The script reads session cookies locally to construct its authentication header. It does not send data to a separate service or include authentication credentials in its JSON export. Only the language preference is saved automatically in local storage. Collection results and the log are held in memory until the page is reloaded, unless you download an export.
 
 The implementation uses internal endpoints rather than the public YouTube Data API. It reuses configuration supplied by the page, including its client key when available; users do not need to supply a separate key. Endpoint and response formats were checked against [ytmusicapi](https://github.com/sigma67/ytmusicapi) and [YouTube.js](https://github.com/LuanRT/YouTube.js). Neither library is a runtime dependency. This is an independent project and is not affiliated with YouTube or Google.
 

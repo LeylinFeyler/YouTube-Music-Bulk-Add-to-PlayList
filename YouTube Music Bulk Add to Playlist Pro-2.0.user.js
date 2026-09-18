@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         YouTube Music Bulk Add to Playlist Pro
 // @namespace    http://tampermonkey.net/
-// @version      3.0.4
-// @description  Збирає пісні, альбоми й сингли виконавця, перевіряє дублікати та додає до плейлиста.
+// @version      3.1.0
+// @description  Collect artist songs, albums and singles, check duplicates, and add them to a playlist.
+// @description:uk Збирає пісні, альбоми й сингли виконавця, перевіряє дублікати та додає до плейлиста.
 // @author       Geronimo
 // @match        https://music.youtube.com/*
 // @run-at       document-idle
@@ -12,6 +13,256 @@
 
 (function () {
     'use strict';
+
+    const LANGUAGE_KEY = 'ytm-bulk-add-language';
+    let language = 'en';
+    try {
+        const saved = globalThis.localStorage?.getItem(LANGUAGE_KEY);
+        if (saved === 'uk' || saved === 'en') language = saved;
+    } catch { /* Storage can be unavailable; keep the in-memory preference. */ }
+    const MESSAGES = {
+    "noStatus": {
+        "en": "no status",
+        "uk": "без статусу"
+    },
+    "rateLimit": {
+        "en": ": too many requests; try again later",
+        "uk": ": забагато запитів; спробуй пізніше"
+    },
+    "previewMore": {
+        "en": "Showing the first 100; export JSON for the full list.",
+        "uk": "Нижче перші 100; повний список — у JSON."
+    },
+    "previewReview": {
+        "en": "Review the list, then click Add.",
+        "uk": "Переглянь список і натисни «Додати»."
+    },
+    "pageFormat": {
+        "uk": "Невідомий формат сторінки YouTube Music. Збирання припинено.",
+        "en": "Unknown YouTube Music page format. Collection stopped."
+    },
+    "trackListMissing": {
+        "uk": "Не знайдено список треків. Не можна надійно перевірити весь плейлист / альбом.",
+        "en": "Track list not found. The full playlist / album cannot be checked reliably."
+    },
+    "nextPageFormat": {
+        "uk": "Невідомий формат наступної сторінки. Список може бути неповним.",
+        "en": "Unknown next-page format. The list may be incomplete."
+    },
+    "paginationFormat": {
+        "uk": "Нерозпізнана пагінація. Список може бути неповним.",
+        "en": "Unrecognized pagination. The list may be incomplete."
+    },
+    "continuationMissing": {
+        "uk": "YouTube Music не повернув очікуване продовження списку. Збирання припинено.",
+        "en": "YouTube Music did not return the expected next page. Collection stopped."
+    },
+    "itemsMissing": {
+        "uk": "Невідомий формат списку: відсутні елементи.",
+        "en": "Unknown list format: items are missing."
+    },
+    "repeatedPage": {
+        "uk": "YouTube повторив сторінку. Повноту списку не підтверджено.",
+        "en": "YouTube repeated a page. List completeness could not be confirmed."
+    },
+    "playlistLink": {
+        "uk": "Потрібне посилання на плейлист YouTube.",
+        "en": "Enter a YouTube playlist link."
+    },
+    "playlistId": {
+        "uk": "Вкажи ID звичайного плейлиста (PL…) або посилання на нього.",
+        "en": "Enter a regular playlist ID (PL…) or its URL."
+    },
+    "artistUrl": {
+        "uk": "Не розпізнано адресу виконавця: {0}. Відкрий сторінку /@ім’я або /channel/UC…",
+        "en": "Unrecognized artist URL: {0}. Open an /@handle or /channel/UC… page."
+    },
+    "artistIdMissing": {
+        "uk": "YouTube Music не повернув ID виконавця для {0}. Спробуй відкрити виконавця через пошук YouTube Music.",
+        "en": "YouTube Music did not return an artist ID for {0}. Try opening the artist through YouTube Music search."
+    },
+    "addNotConfirmed": {
+        "uk": "YouTube не підтвердив додавання ({0}).",
+        "en": "YouTube did not confirm the addition ({0})."
+    },
+    "partialBatch": {
+        "uk": "Відповідь не підтвердила всі треки пакета. Частину могло бути додано.",
+        "en": "The response did not confirm every track in the batch. Some may have been added."
+    },
+    "stopped": {
+        "uk": "Зупинено користувачем.",
+        "en": "Stopped by the user."
+    },
+    "accountChanged": {
+        "uk": "Акаунт змінився. Збери список заново.",
+        "en": "The account changed. Collect songs again."
+    },
+    "noSession": {
+        "uk": "Не знайдено авторизовану сесію. Увійди в YouTube Music і перезавантаж сторінку.",
+        "en": "No signed-in session found. Sign in to YouTube Music and reload the page."
+    },
+    "noConfig": {
+        "uk": "Немає конфігурації YouTube Music. Перезавантаж сторінку; скрипт має виконуватися в контексті сторінки.",
+        "en": "YouTube Music configuration is unavailable. Reload the page; the script must run in the page context."
+    },
+    "httpError": {
+        "uk": "HTTP {0}{1}",
+        "en": "HTTP {0}{1}"
+    },
+    "uncertainWrite": {
+        "uk": "{0}. Результат останнього пакета невідомий. Збери список заново перед повтором.",
+        "en": "{0}. The last batch outcome is unknown. Collect songs again before retrying."
+    },
+    "readPlaylist": {
+        "uk": "Читаю цільовий плейлист: {0}.",
+        "en": "Reading destination playlist: {0}."
+    },
+    "playlistTrackError": {
+        "uk": "Не вдалося прочитати один із треків плейлиста. Перевірку дублікатів припинено.",
+        "en": "Could not read a playlist track. Duplicate checking stopped."
+    },
+    "playlistProgress": {
+        "uk": "Перевіряю плейлист: прочитано {0} треків…",
+        "en": "Checking playlist: {0} tracks read…"
+    },
+    "readArtist": {
+        "uk": "Читаю каталог виконавця: {0}.",
+        "en": "Reading artist catalog: {0}."
+    },
+    "releaseProgress": {
+        "uk": "Збираю всі релізи {0}…",
+        "en": "Collecting all releases by {0}…"
+    },
+    "releasesMissing": {
+        "uk": "Не розпізнано повний список релізів. Додавання не починалося.",
+        "en": "The full release list was not recognized. No additions have started."
+    },
+    "albumProgress": {
+        "uk": "Реліз {0}/{1}: {2}. Пісень: {3}",
+        "en": "Release {0}/{1}: {2}. Songs: {3}"
+    },
+    "noSongs": {
+        "uk": "Не знайдено пісень. Відкрий головну сторінку виконавця, а не звичайний канал чи список відео. Можливо, формат сайту змінився.",
+        "en": "No songs found. Open the artist's main page, not a regular channel or video list. The site format may have changed."
+    },
+    "collectionSummary": {
+        "uk": "{0}: релізів {1}, унікальних ID пісень {2}, пропущених відео / недоступних рядків {3}.",
+        "en": "{0}: releases {1}, unique song IDs {2}, skipped video / unavailable rows {3}."
+    },
+    "toggle": {
+        "uk": "ДОДАТИ ВСЕ В ПЛЕЙЛИСТ",
+        "en": "ADD ALL TO PLAYLIST"
+    },
+    "heading": {
+        "uk": "Усі пісні виконавця",
+        "en": "All songs by an artist"
+    },
+    "intro": {
+        "uk": "Відкрий головну сторінку виконавця. Скрипт збере пісні, альбоми та сингли / EP.",
+        "en": "Open the artist's main page. The script collects songs, albums, singles and EPs."
+    },
+    "targetLabel": {
+        "uk": "Плейлист: посилання або ID",
+        "en": "Playlist URL or ID"
+    },
+    "versionsLabel": {
+        "uk": " Також інші видання альбомів",
+        "en": " Include other album editions"
+    },
+    "duplicatesNote": {
+        "uk": "Дублікати перевіряються за ID. Ремастери й різні записи однієї пісні можуть мати різні ID.",
+        "en": "Duplicates are checked by ID. Remasters and different recordings may have different IDs."
+    },
+    "scan": {
+        "uk": "1. Зібрати пісні",
+        "en": "1. Collect songs"
+    },
+    "add": {
+        "uk": "2. Додати",
+        "en": "2. Add"
+    },
+    "stop": {
+        "uk": "Зупинити",
+        "en": "Stop"
+    },
+    "ready": {
+        "uk": "Готово до збирання.",
+        "en": "Ready to collect."
+    },
+    "openPlaylist": {
+        "uk": "Відкрити цільовий плейлист",
+        "en": "Open destination playlist"
+    },
+    "export": {
+        "uk": "Зберегти список JSON",
+        "en": "Export song list as JSON"
+    },
+    "log": {
+        "uk": "Журнал",
+        "en": "Activity log"
+    },
+    "runError": {
+        "uk": "{0}\nПідтверджено доданих у цьому запуску: {1}. Перед повтором натисни «Зібрати пісні».",
+        "en": "{0}\nConfirmed additions in this run: {1}. Click Collect songs before retrying."
+    },
+    "stopping": {
+        "uk": "Зупиняю після поточного запиту. Уже надіслане додавання може завершитися.",
+        "en": "Stopping after the current request. An addition already sent may still complete."
+    },
+    "resolving": {
+        "uk": "Визначаю виконавця…",
+        "en": "Resolving artist…"
+    },
+    "collectionStart": {
+        "uk": "Початок збирання: {0}.",
+        "en": "Starting collection: {0}."
+    },
+    "addCount": {
+        "uk": "2. Додати {0} пісень",
+        "en": "2. Add songs: {0}"
+    },
+    "preview": {
+        "uk": "{0}\nПлейлист: {1}\nЗнайдено: {2}; уже є: {3}; нових: {4}.\n{5}",
+        "en": "{0}\nPlaylist: {1}\nFound: {2}; already present: {3}; new: {4}.\n{5}"
+    },
+    "readyToAdd": {
+        "uk": "Готово до додавання {0} пісень у {1}.",
+        "en": "Ready to add {0} songs to {1}."
+    },
+    "adding": {
+        "uk": "Додаю до «{0}»: {1}/{2}…",
+        "en": "Adding to “{0}”: {1}/{2}…"
+    },
+    "confirmed": {
+        "uk": "Підтверджено {0}/{1}.",
+        "en": "Confirmed {0}/{1}."
+    },
+    "verificationMissing": {
+        "uk": "Під час повторної перевірки не знайдено {0} треків. Оновлення може ще оброблятися.",
+        "en": "Verification could not find {0} tracks. The update may still be processing."
+    },
+    "finished": {
+        "uk": "Готово! Додано й перевірено: {0}. Уже були перед додаванням: {1}.\nОнови сторінку цільового плейлиста, щоб побачити зміни.",
+        "en": "Done! Added and verified: {0}. Already present before adding: {1}.\nRefresh the destination playlist to see the changes."
+    },
+    "verified": {
+        "uk": "Повторна перевірка плейлиста завершена.",
+        "en": "Playlist verification completed."
+    },
+    "startup": {
+        "uk": "[YTM Bulk Add 3.1.0] Панель запущено. Alt+Shift+P відкриває її.",
+        "en": "[YTM Bulk Add 3.1.0] Panel initialized. Alt+Shift+P opens it."
+    }
+};
+    function t(key, ...args) { return { key, args }; }
+    function render(message) {
+        if (!message || typeof message !== 'object' || !Object.hasOwn(MESSAGES, message.key)) return String(message ?? '');
+        return MESSAGES[message.key][language].replace(/\{(\d+)\}/g, (_, index) => render(message.args[Number(index)]));
+    }
+    class LocalizedError extends Error {
+        constructor(detail) { super(render(detail)); this.detail = detail; }
+    }
+    function errorDetail(error) { return error.detail ?? error.message ?? String(error); }
 
     const DEFAULT_PLAYLIST = 'PLlsCQDB_ve7YB19JET-pc0TN255DYOId0';
     const BATCH_SIZE = 25;
@@ -64,7 +315,7 @@
     function sectionsOf(response) {
         const contents = response.contents;
         const layout = contents?.singleColumnBrowseResultsRenderer || contents?.twoColumnBrowseResultsRenderer;
-        if (!layout) throw new Error('Невідомий формат сторінки YouTube Music. Збирання припинено.');
+        if (!layout) throw new LocalizedError(t('pageFormat'));
         const tab = layout.tabs?.find(tab => tab.tabRenderer?.selected)?.tabRenderer || layout.tabs?.[0]?.tabRenderer;
         return [...(tab?.content?.sectionListRenderer?.contents || []),
             ...(layout.secondaryContents?.sectionListRenderer?.contents || [])];
@@ -74,7 +325,7 @@
         const sections = sectionsOf(response);
         const shelf = sections.map(section => section.musicPlaylistShelfRenderer).find(Boolean)
             || (album && sections.map(section => section.musicShelfRenderer).find(Boolean));
-        if (!shelf) throw new Error('Не знайдено список треків. Не можна надійно перевірити весь плейлист / альбом.');
+        if (!shelf) throw new LocalizedError(t('trackListMissing'));
         // An empty playlist can omit contents entirely. Only normalize a recognized
         // playlist shelf on the initial page; malformed continuation pages still fail.
         if (sections.some(section => section.musicPlaylistShelfRenderer === shelf) &&
@@ -92,10 +343,10 @@
             const commands = values(item.continuationItemRenderer, 'continuationCommand');
             const command = commands.find(command => command.token &&
                 (!command.request || command.request === 'CONTINUATION_REQUEST_TYPE_BROWSE'));
-            if (!command) throw new Error('Невідомий формат наступної сторінки. Список може бути неповним.');
+            if (!command) throw new LocalizedError(t('nextPageFormat'));
             return { token: command.token, legacy: false };
         }
-        if (container.continuations?.length) throw new Error('Нерозпізнана пагінація. Список може бути неповним.');
+        if (container.continuations?.length) throw new LocalizedError(t('paginationFormat'));
         return null;
     }
 
@@ -106,7 +357,7 @@
         const actions = [...(response.onResponseReceivedActions || []), ...(response.onResponseReceivedEndpoints || [])];
         const append = actions.map(action => action.appendContinuationItemsAction).find(Boolean);
         if (append && Array.isArray(append.continuationItems)) return { contents: append.continuationItems };
-        throw new Error('YouTube Music не повернув очікуване продовження списку. Збирання припинено.');
+        throw new LocalizedError(t('continuationMissing'));
     }
 
     async function readPages(first, body, api, consume, check = () => {}) {
@@ -115,11 +366,11 @@
         while (true) {
             check();
             const items = container.contents || container.items;
-            if (!Array.isArray(items)) throw new Error('Невідомий формат списку: відсутні елементи.');
+            if (!Array.isArray(items)) throw new LocalizedError(t('itemsMissing'));
             consume(items);
             const next = nextPage(container);
             if (!next) return;
-            if (seen.has(next.token)) throw new Error('YouTube повторив сторінку. Повноту списку не підтверджено.');
+            if (seen.has(next.token)) throw new LocalizedError(t('repeatedPage'));
             seen.add(next.token);
             check();
             const response = await api('browse', next.legacy ? body : { continuation: next.token }, next.legacy ? next.token : undefined);
@@ -132,10 +383,10 @@
         let id = input;
         if (/^https?:\/\//i.test(input)) {
             const url = new URL(input);
-            if (!['music.youtube.com', 'www.youtube.com', 'youtube.com'].includes(url.hostname)) throw new Error('Потрібне посилання на плейлист YouTube.');
+            if (!['music.youtube.com', 'www.youtube.com', 'youtube.com'].includes(url.hostname)) throw new LocalizedError(t('playlistLink'));
             id = url.searchParams.get('list') || '';
         }
-        if (!/^PL[A-Za-z0-9_-]+$/.test(id)) throw new Error('Вкажи ID звичайного плейлиста (PL…) або посилання на нього.');
+        if (!/^PL[A-Za-z0-9_-]+$/.test(id)) throw new LocalizedError(t('playlistId'));
         return id;
     }
 
@@ -153,22 +404,22 @@
         if (direct) return direct;
         const url = new URL(value);
         if (url.hostname !== 'music.youtube.com' || !/^\/@[^/]+\/?$/.test(url.pathname)) {
-            throw new Error(`Не розпізнано адресу виконавця: ${url.pathname}. Відкрий сторінку /@ім’я або /channel/UC…`);
+            throw new LocalizedError(t('artistUrl', url.pathname));
         }
         url.search = '';
         url.hash = '';
         const response = await api('navigation/resolve_url', { url: url.href });
         const id = response.endpoint?.browseEndpoint?.browseId;
         if (typeof id !== 'string' || !/^(?:MPLA)?UC[A-Za-z0-9_-]+$/.test(id)) {
-            throw new Error(`YouTube Music не повернув ID виконавця для ${url.pathname}. Спробуй відкрити виконавця через пошук YouTube Music.`);
+            throw new LocalizedError(t('artistIdMissing', url.pathname));
         }
         return id.replace(/^MPLA/, '');
     }
 
     function addedIds(response, expected) {
-        if (response.status !== 'STATUS_SUCCEEDED') throw new Error(`YouTube не підтвердив додавання (${response.status || 'без статусу'}).`);
+        if (response.status !== 'STATUS_SUCCEEDED') throw new LocalizedError(t('addNotConfirmed', response.status || t('noStatus')));
         const confirmed = new Set((response.playlistEditResults || []).map(result => result.playlistEditVideoAddedResultData?.videoId).filter(Boolean));
-        if (expected.some(id => !confirmed.has(id))) throw new Error('Відповідь не підтвердила всі треки пакета. Частину могло бути додано.');
+        if (expected.some(id => !confirmed.has(id))) throw new LocalizedError(t('partialBatch'));
         return confirmed;
     }
 
@@ -180,13 +431,13 @@
     if (window.top !== window.self || document.getElementById('ytm-bulk-add-pro')) return;
 
     const state = { busy: false, stop: false, plan: null, logs: [], confirmed: 0 };
-    function check() { if (state.stop) throw new Error('Зупинено користувачем.'); }
+    function check() { if (state.stop) throw new LocalizedError(t('stopped')); }
     function config(key) { return window.ytcfg?.get?.(key) ?? window.ytcfg?.data_?.[key]; }
     function identity() {
         return JSON.stringify([config('SESSION_INDEX') ?? '0', config('DELEGATED_SESSION_ID') || '', config('DATASYNC_ID') || '']);
     }
     function assertIdentity(expected) {
-        if (identity() !== expected) throw new Error('Акаунт змінився. Збери список заново.');
+        if (identity() !== expected) throw new LocalizedError(t('accountChanged'));
     }
 
     async function authorization() {
@@ -195,7 +446,7 @@
             return [part.slice(0, index).trim(), part.slice(index + 1)];
         }));
         const secret = cookies.get('SAPISID') || cookies.get('__Secure-3PAPISID') || cookies.get('__Secure-1PAPISID');
-        if (!secret) throw new Error('Не знайдено авторизовану сесію. Увійди в YouTube Music і перезавантаж сторінку.');
+        if (!secret) throw new LocalizedError(t('noSession'));
         const timestamp = Math.floor(Date.now() / 1000);
         const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(`${timestamp} ${secret} ${location.origin}`));
         const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -210,7 +461,7 @@
             await sleep(Math.max(0, REQUEST_DELAY - (Date.now() - lastRequest)));
             check();
             const sourceContext = config('INNERTUBE_CONTEXT');
-            if (!sourceContext?.client?.clientVersion) throw new Error('Немає конфігурації YouTube Music. Перезавантаж сторінку; скрипт має виконуватися в контексті сторінки.');
+            if (!sourceContext?.client?.clientVersion) throw new LocalizedError(t('noConfig'));
             const context = JSON.parse(JSON.stringify(sourceContext));
             // Stable section names for parsing; the website's displayed language stays unchanged.
             context.client.hl = 'en';
@@ -242,19 +493,19 @@
                     method: 'POST', credentials: 'same-origin', headers,
                     body: JSON.stringify({ context, ...body }), signal: controller.signal,
                 });
-                if (!response.ok) throw new Error(`HTTP ${response.status}${response.status === 429 ? ': забагато запитів; спробуй пізніше' : ''}`);
+                if (!response.ok) throw new LocalizedError(t('httpError', response.status, response.status === 429 ? t('rateLimit') : ''));
                 const result = await response.json();
-                if (result.error) throw new Error(`YouTube: ${result.error.message || result.error.code}`);
+                if (result.error) throw new LocalizedError(`YouTube: ${result.error.message || result.error.code}`);
                 return result;
             } catch (error) {
-                if (endpoint === 'browse/edit_playlist') throw new Error(`${error.message}. Результат останнього пакета невідомий. Збери список заново перед повтором.`);
+                if (endpoint === 'browse/edit_playlist') throw new LocalizedError(t('uncertainWrite', errorDetail(error)));
                 throw error;
             } finally { clearTimeout(timeout); }
         };
     }
 
     async function playlistTracks(id, api) {
-        log(`Читаю цільовий плейлист: ${id}.`);
+        log(t('readPlaylist', id));
         const body = { browseId: `VL${id}` };
         const response = await api('browse', body);
         const shelf = trackShelf(response);
@@ -267,11 +518,11 @@
                     // Unavailable/deleted rows can legitimately lack an ID; they cannot match a new playable track.
                     const row = item.musicResponsiveListItemRenderer;
                     if (row.musicItemRendererDisplayPolicy !== 'MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT') {
-                        throw new Error('Не вдалося прочитати один із треків плейлиста. Перевірку дублікатів припинено.');
+                        throw new LocalizedError(t('playlistTrackError'));
                     }
                 }
             }
-            status(`Перевіряю плейлист: прочитано ${tracks.size} треків…`);
+            status(t('playlistProgress', tracks.size));
         }, check);
         const title = values(response.header, 'title').map(textOf).find(Boolean)
             || values(sectionsOf(response), 'musicResponsiveHeaderRenderer').map(header => textOf(header.title)).find(Boolean) || id;
@@ -279,7 +530,7 @@
     }
 
     async function collectArtist(browseId, api, includeVersions) {
-        log(`Читаю каталог виконавця: ${browseId}.`);
+        log(t('readArtist', browseId));
         const songs = new Map();
         const releases = new Map();
         let skipped = 0;
@@ -323,18 +574,18 @@
             }
         }
         for (const endpoint of catalogs.values()) {
-            status(`Збираю всі релізи ${name}…`);
+            status(t('releaseProgress', name));
             const body = { browseId: endpoint.browseId, ...(endpoint.params ? { params: endpoint.params } : {}) };
             const response = await api('browse', body);
             const grids = sectionsOf(response).map(section => section.gridRenderer || section.musicCarouselShelfRenderer).filter(Boolean);
-            if (!grids.length) throw new Error('Не розпізнано повний список релізів. Додавання не починалося.');
+            if (!grids.length) throw new LocalizedError(t('releasesMissing'));
             for (const grid of grids) await readPages(grid, body, api, consumeReleases, check);
         }
         let completed = 0;
         // Map iteration also visits newly discovered alternate editions, once per browseId.
         for (const release of releases.values()) {
             check();
-            status(`Реліз ${++completed}/${releases.size}: ${release.title}. Пісень: ${songs.size}`);
+            status(t('albumProgress', ++completed, releases.size, release.title, songs.size));
             const body = { browseId: release.browseId };
             const response = await api('browse', body);
             await readPages(trackShelf(response, true), body, api, items => consumeSongs(items, true), check);
@@ -348,19 +599,24 @@
                 }
             }
         }
-        if (!songs.size) throw new Error('Не знайдено пісень. Відкрий головну сторінку виконавця, а не звичайний канал чи список відео. Можливо, формат сайту змінився.');
-        log(`${name}: релізів ${completed}, унікальних ID пісень ${songs.size}, пропущених відео / недоступних рядків ${skipped}.`);
+        if (!songs.size) throw new LocalizedError(t('noSongs'));
+        log(t('collectionSummary', name, completed, songs.size, skipped));
         return { name, songs: [...songs.values()], releaseCount: completed, skipped };
     }
 
     const host = document.createElement('div');
     host.id = 'ytm-bulk-add-pro';
+    const bindings = new Map();
     const root = host.attachShadow({ mode: 'open' });
     // Build DOM directly: innerHTML can be blocked by the site's Trusted Types policy.
     function element(tag, attributes = {}, text = '', parent = root) {
         const node = document.createElement(tag);
         for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
-        node.textContent = text;
+        if (text && typeof text === 'object') {
+            const label = document.createTextNode(render(text));
+            node.append(label);
+            bindings.set(label, text);
+        } else node.textContent = text;
         parent.append(node);
         return node;
     }
@@ -379,29 +635,34 @@
             a { color:#9ecbff; } .row { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
             #status { white-space:pre-wrap; overflow-wrap:anywhere; } #preview { max-height:180px; overflow:auto; padding-left:24px; }
             #log { white-space:pre-wrap; overflow-wrap:anywhere; max-height:160px; overflow:auto; font-size:12px; }
+            select { margin-left:8px; padding:6px; background:#101014; color:white; border:1px solid #777; border-radius:5px; }
             small { color:#ccc; }
         `);
-    element('button', { id: 'toggle', type: 'button' }, 'ДОДАТИ ВСЕ В ПЛЕЙЛИСТ');
+    element('button', { id: 'toggle', type: 'button' }, t('toggle'));
     const panel = element('section', { id: 'panel', hidden: '' });
-    element('h3', {}, 'Усі пісні виконавця', panel);
-    element('p', {}, 'Відкрий головну сторінку виконавця. Скрипт збере пісні, альбоми та сингли / EP.', panel);
-    const targetLabel = element('label', {}, 'Плейлист: посилання або ID', panel);
+    element('h3', {}, t('heading'), panel);
+    const languageLabel = element('label', {}, 'Language / Мова', panel);
+    const languageSelect = element('select', { id: 'language', 'aria-label': 'Language / Мова' }, '', languageLabel);
+    element('option', { value: 'en' }, 'English', languageSelect);
+    element('option', { value: 'uk' }, 'Українська', languageSelect);
+    element('p', {}, t('intro'), panel);
+    const targetLabel = element('label', {}, t('targetLabel'), panel);
     element('input', { id: 'target', type: 'text', spellcheck: 'false' }, '', targetLabel);
     const versionsLabel = element('label', {}, '', panel);
     element('input', { id: 'versions', type: 'checkbox', checked: '' }, '', versionsLabel);
-    element('span', {}, ' Також інші видання альбомів', versionsLabel);
-    element('small', {}, 'Дублікати перевіряються за ID. Ремастери й різні записи однієї пісні можуть мати різні ID.', panel);
+    element('span', {}, t('versionsLabel'), versionsLabel);
+    element('small', {}, t('duplicatesNote'), panel);
     const actions = element('div', { class: 'row' }, '', panel);
-    element('button', { id: 'scan', type: 'button' }, '1. Зібрати пісні', actions);
-    element('button', { id: 'add', type: 'button', disabled: '' }, '2. Додати', actions);
-    element('button', { id: 'stop', type: 'button', class: 'secondary', disabled: '' }, 'Зупинити', actions);
-    element('p', { id: 'status', role: 'status', 'aria-live': 'polite' }, 'Готово до збирання.', panel);
-    element('a', { id: 'playlist', target: '_blank', rel: 'noopener' }, 'Відкрити цільовий плейлист', panel);
+    element('button', { id: 'scan', type: 'button' }, t('scan'), actions);
+    element('button', { id: 'add', type: 'button', disabled: '' }, t('add'), actions);
+    element('button', { id: 'stop', type: 'button', class: 'secondary', disabled: '' }, t('stop'), actions);
+    element('p', { id: 'status', role: 'status', 'aria-live': 'polite' }, t('ready'), panel);
+    element('a', { id: 'playlist', target: '_blank', rel: 'noopener' }, t('openPlaylist'), panel);
     element('ol', { id: 'preview' }, '', panel);
     const exports = element('div', { class: 'row' }, '', panel);
-    element('button', { id: 'export', type: 'button', class: 'secondary', disabled: '' }, 'Зберегти список JSON', exports);
+    element('button', { id: 'export', type: 'button', class: 'secondary', disabled: '' }, t('export'), exports);
     const details = element('details', {}, '', panel);
-    element('summary', {}, 'Журнал', details);
+    element('summary', {}, t('log'), details);
     element('pre', { id: 'log' }, '', details);
     function mount() {
         if (!host.isConnected) (document.body || document.documentElement).append(host);
@@ -415,10 +676,28 @@
     }
     const $ = id => root.getElementById(id);
     $('target').value = DEFAULT_PLAYLIST;
-    function status(message) { $('status').textContent = message; }
+    function setText(node, message) {
+        bindings.set(node, message);
+        node.textContent = render(message);
+    }
+    function status(message) { setText($('status'), message); }
+    function formattedLogs() {
+        return state.logs.map(entry => `${entry.time.toLocaleTimeString(language === 'uk' ? 'uk-UA' : 'en-US')} ${render(entry.message)}`);
+    }
+    function refreshLanguage() {
+        host.setAttribute('lang', language);
+        for (const [node, message] of bindings) node.textContent = render(message);
+        $('log').textContent = formattedLogs().join('\n');
+    }
+    $('language').value = language;
+    $('language').onchange = () => {
+        language = $('language').value === 'uk' ? 'uk' : 'en';
+        try { globalThis.localStorage?.setItem(LANGUAGE_KEY, language); } catch { /* In-memory switching still works. */ }
+        refreshLanguage();
+    };
     function log(message) {
-        state.logs.push(`${new Date().toLocaleTimeString()} ${message}`);
-        $('log').textContent = state.logs.join('\n');
+        state.logs.push({ time: new Date(), message });
+        $('log').textContent = formattedLogs().join('\n');
     }
     function updateLink() {
         try { $('playlist').href = `https://music.youtube.com/playlist?list=${parsePlaylist($('target').value)}`; }
@@ -445,8 +724,8 @@
         controls();
         try { await task(); }
         catch (error) {
-            log(error.message);
-            status(`${error.message}\nПідтверджено доданих у цьому запуску: ${state.confirmed}. Перед повтором натисни «Зібрати пісні».`);
+            log(errorDetail(error));
+            status(t('runError', errorDetail(error), state.confirmed));
             // A partial write / failed verification must never leave a stale add button enabled.
             if (state.plan) state.plan.pending = [];
         } finally { state.busy = false; controls(); }
@@ -456,7 +735,7 @@
     $('versions').onchange = invalidate;
     $('stop').onclick = () => {
         state.stop = true;
-        status('Зупиняю після поточного запиту. Уже надіслане додавання може завершитися.');
+        status(t('stopping'));
         controls();
     };
     $('scan').onclick = () => run(async () => {
@@ -466,22 +745,22 @@
         const artistUrl = location.href;
         const account = identity();
         const api = makeApi(account);
-        status('Визначаю виконавця…');
+        status(t('resolving'));
         const browseId = await resolveArtist(artistUrl, api);
-        log(`Початок збирання: ${browseId}.`);
+        log(t('collectionStart', browseId));
         const existing = await playlistTracks(playlistId, api);
         const artist = await collectArtist(browseId, api, $('versions').checked);
         check();
         const pending = artist.songs.filter(song => !existing.tracks.has(song.id));
         state.plan = { ...artist, playlistId, playlistTitle: existing.title, browseId, account, pending };
-        $('add').textContent = `2. Додати ${pending.length} пісень`;
+        setText($('add'), t('addCount', pending.length));
         $('preview').replaceChildren(...pending.slice(0, 100).map(song => {
             const li = document.createElement('li');
             li.textContent = song.title;
             return li;
         }));
-        status(`${artist.name}\nПлейлист: ${existing.title}\nЗнайдено: ${artist.songs.length}; уже є: ${artist.songs.length - pending.length}; нових: ${pending.length}.\n${pending.length > 100 ? 'Нижче перші 100; повний список — у JSON.' : 'Переглянь список і натисни «Додати».'}`);
-        log(`Готово до додавання ${pending.length} пісень у ${playlistId}.`);
+        status(t('preview', artist.name, existing.title, artist.songs.length, artist.songs.length - pending.length, pending.length, pending.length > 100 ? t('previewMore') : t('previewReview')));
+        log(t('readyToAdd', pending.length, playlistId));
     });
     $('add').onclick = () => run(async () => {
         const plan = state.plan;
@@ -495,27 +774,27 @@
         for (let offset = 0; offset < pending.length; offset += BATCH_SIZE) {
             check();
             const ids = pending.slice(offset, offset + BATCH_SIZE).map(song => song.id);
-            status(`Додаю до «${plan.playlistTitle}»: ${state.confirmed}/${pending.length}…`);
+            status(t('adding', plan.playlistTitle, state.confirmed, pending.length));
             const response = await api('browse/edit_playlist', {
                 playlistId: plan.playlistId,
                 actions: ids.map(id => ({ action: 'ACTION_ADD_VIDEO', addedVideoId: id })),
             });
             addedIds(response, ids);
             state.confirmed += ids.length;
-            log(`Підтверджено ${state.confirmed}/${pending.length}.`);
+            log(t('confirmed', state.confirmed, pending.length));
         }
         check();
         const verified = await playlistTracks(plan.playlistId, api);
         const missing = pending.filter(song => !verified.tracks.has(song.id));
-        if (missing.length) throw new Error(`Під час повторної перевірки не знайдено ${missing.length} треків. Оновлення може ще оброблятися.`);
+        if (missing.length) throw new LocalizedError(t('verificationMissing', missing.length));
         plan.pending = [];
-        status(`Готово! Додано й перевірено: ${state.confirmed}. Уже були перед додаванням: ${plan.songs.length - pending.length}.\nОнови сторінку цільового плейлиста, щоб побачити зміни.`);
-        log('Повторна перевірка плейлиста завершена.');
+        status(t('finished', state.confirmed, plan.songs.length - pending.length));
+        log(t('verified'));
     });
     $('export').onclick = () => {
         if (!state.plan) return;
         const { name, browseId, playlistId, songs, releaseCount, skipped } = state.plan;
-        const blob = new Blob([JSON.stringify({ artist: name, browseId, playlistId, releaseCount, skipped, songs, log: state.logs }, null, 2)], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify({ artist: name, browseId, playlistId, releaseCount, skipped, songs, log: formattedLogs() }, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
@@ -526,6 +805,7 @@
     window.addEventListener('beforeunload', event => {
         if (state.busy) { event.preventDefault(); event.returnValue = ''; }
     });
+    refreshLanguage();
     updateLink();
     mount();
     document.addEventListener('yt-navigate-finish', mount);
@@ -535,5 +815,5 @@
             $('panel').hidden = false;
         }
     });
-    console.info('[YTM Bulk Add 3.0.4] Панель запущено. Alt+Shift+P відкриває її.');
+    console.info(render(t('startup')));
 })();
