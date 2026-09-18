@@ -154,6 +154,7 @@ for (const empty of [false, true]) test(`browser workflow with ${empty ? 'empty'
     } }, contents: [release(1)] } };
     const existing = new Set(empty ? [] : [id(1)]);
     const writes = [];
+    let failWrite = false;
     const requests = [];
     const location = new URL('https://music.youtube.com/channel/UCartist');
     const fakeFetch = async (url, options) => {
@@ -161,12 +162,13 @@ for (const empty of [false, true]) test(`browser workflow with ${empty ? 'empty'
         requests.push({ url: String(url), body });
         assert.equal(context.client.hl, 'en');
         assert.equal(options.credentials, 'same-origin');
-        assert.equal(options.headers['X-Goog-AuthUser'], '2');
+        assert.equal(options.headers['X-Goog-AuthUser'], cfg.SESSION_INDEX);
         assert.equal(options.headers['X-Goog-PageId'], 'brand-account');
         assert.match(options.headers.Authorization, /^SAPISIDHASH \d+_[a-f0-9]{40}$/);
         let result;
         if (url.pathname.endsWith('/browse/edit_playlist')) {
             writes.push(body);
+            if (failWrite) throw Error('Lost response');
             for (const action of body.actions) {
                 assert.equal(action.action, 'ACTION_ADD_VIDEO');
                 assert.equal(action.dedupeOption, undefined);
@@ -221,8 +223,33 @@ for (const empty of [false, true]) test(`browser workflow with ${empty ? 'empty'
     await operation;
     assert.equal(writes.length, 1, element('status').textContent);
     assert.deepEqual(writes[0].actions.map(action => action.addedVideoId), empty ? [id(1), id(2), id(3)] : [id(2), id(3)]);
-    assert.match(element('status').textContent, empty ? /Added and verified: 3/ : /Added and verified: 2/);
+    assert.match(element('status').textContent, empty ? /Server-confirmed additions: 3/ : /Server-confirmed additions: 2/);
     assert.equal(element('add').disabled, true);
+    const playlistReads = () => requests.filter(request => request.body.browseId?.startsWith('VLPL')).length;
+    assert.equal(playlistReads(), 1);
+    await element('scan').onclick();
+    assert.equal(playlistReads(), 1);
+    assert.equal(element('add').disabled, true);
+    // Explicit refresh sees edits elsewhere and discards the old plan.
+    existing.delete(id(3));
+    await element('refresh').onclick();
+    assert.equal(playlistReads(), 2);
+    await element('scan').onclick();
+    assert.equal(playlistReads(), 2);
+    assert.equal(element('add').disabled, false);
+    failWrite = true;
+    await element('add').onclick();
+    assert.match(element('log').textContent, /cache discarded/);
+    failWrite = false;
+    await element('scan').onclick();
+    assert.equal(playlistReads(), 3);
+    // Another account must never reuse the original account's snapshot.
+    cfg.SESSION_INDEX = '3';
+    await element('scan').onclick();
+    assert.equal(playlistReads(), 4);
+    element('target').value = 'PLanother';
+    await element('scan').onclick();
+    assert.equal(playlistReads(), 5);
     element('target').value = 'invalid';
     await element('scan').onclick();
     assert.match(element('status').textContent, /Enter a regular playlist ID/);
@@ -231,7 +258,7 @@ for (const empty of [false, true]) test(`browser workflow with ${empty ? 'empty'
     assert.match(element('status').textContent, /Вкажи ID звичайного плейлиста/);
     assert.match(element('log').textContent, /Вкажи ID звичайного плейлиста/);
     assert.equal(cfg.INNERTUBE_CONTEXT.client.hl, 'uk');
-    assert.equal(requests.filter(request => request.body.browseId?.startsWith('VLPL')).length, 3);
+    assert.equal(requests.filter(request => request.body.browseId?.startsWith('VLPL')).length, 5);
     // A fresh script execution restores the saved choice.
     const source = fs.readFileSync(require.resolve('../YouTube Music Bulk Add to Playlist Pro-2.0.user.js'), 'utf8');
     vm.runInContext(source, context);

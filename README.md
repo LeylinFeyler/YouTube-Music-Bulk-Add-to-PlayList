@@ -4,7 +4,7 @@ A Tampermonkey userscript for collecting songs from an artist's YouTube Music ca
 
 The script runs inside your signed-in YouTube Music browser session. It requires no separate YouTube Data API key, Google Cloud project, local server, or build step. It uses YouTube Music's internal web endpoints, which may change without notice or impose request limits.
 
-The current script version is **3.1.0**. The source filename still contains `2.0`; the `@version` field inside the file identifies the actual version. English is the default interface language. Use the **Language / Мова** selector in the panel to switch between English and Ukrainian. The selection is saved in local browser storage on music.youtube.com. If storage is unavailable, switching still works for the current page. Buttons, status messages, script-generated errors, and existing activity-log entries update immediately, including during collection or addition. Artist names, song titles, and error text supplied by the browser or YouTube are not translated.
+The current script version is **3.2.0**. The source filename still contains `2.0`; the `@version` field inside the file identifies the actual version. English is the default interface language. Use the **Language / Мова** selector in the panel to switch between English and Ukrainian. The selection is saved in local browser storage on music.youtube.com. If storage is unavailable, switching still works for the current page. Buttons, status messages, script-generated errors, and existing activity-log entries update immediately, including during collection or addition. Artist names, song titles, and error text supplied by the browser or YouTube are not translated.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ The other-editions checkbox is enabled by default. Leave it selected to follow t
 
 ### Collect and review
 
-Click **1. Collect songs**. The script resolves the artist ID, reads every returned page of the destination playlist, and collects tracks from the artist's catalog. You do not need to scroll the page or open the albums manually. Collection does not modify the playlist.
+Click **1. Collect songs**. The script resolves the artist ID, reads every returned page of the destination playlist if its data is not already cached in this tab, and collects tracks from the artist's catalog. You do not need to scroll the page or open the albums manually. Collection does not modify the playlist.
 
 When collection finishes, the panel shows the artist, destination, total number of unique collected track IDs, number already present, and number of new tracks. The preview displays the first 100 new tracks. There are no individual selection controls: the Add button submits all new tracks in the collected result.
 
@@ -50,20 +50,29 @@ Changing the destination or the other-editions option clears the collected plan.
 
 ### Add songs
 
-Click **2. Add songs: N**. Before writing, the script reads the destination again to exclude tracks added since collection. It submits the remaining tracks in batches of up to 25, checks the server's acknowledgements, and reads the playlist again to verify that the submitted IDs are present.
+Click **2. Add songs: N**. The script compares the collected songs with its cached playlist IDs, then submits new tracks in batches of up to 25. Each batch must receive a successful response confirming every submitted track ID. Confirmed IDs are added to the cache immediately. There is no full playlist scan before or after the write.
 
-Keep the tab open and remain signed in while it runs. The final success message is shown only after verification. Open or refresh the destination playlist to see the changes. If no new tracks were found, the Add button remains disabled.
+Keep the tab open and remain signed in while it runs. The final success message reports server-confirmed additions; it does not mean the playlist was independently read back. Open or refresh the destination playlist to see the changes. If no new tracks were found, the Add button remains disabled.
 
 ### Stop or recover from an interruption
 
 Click **Stop** to prevent further requests. An in-flight request is allowed to finish, so a batch already submitted may still be added. Stopping does not undo completed additions.
 
-After an error, interruption, or page reload, return to the artist page, check the destination, and collect again. The new scan excludes IDs already present. A failed write is not retried automatically because the server may have accepted it even if the response was lost. Progress is not saved across reloads, and there is no automatic rollback.
+After an error, interruption, or page reload, return to the artist page, check the destination, and collect again. The new scan excludes known IDs using the cache, or performs a full read if the cache was invalidated or the tab was reloaded. A failed write is not retried automatically because the server may have accepted it even if the response was lost. Progress is not saved across reloads, and there is no automatic rollback.
+
+### Playlist caching
+
+The first collection reads the destination in full and keeps its track IDs in memory. Further collections for that playlist reuse this data, including additions confirmed during the current tab session. Cache entries are separated by account/profile and playlist ID. Navigating between artists within the same tab preserves them; reloading or closing the tab clears them.
+
+The panel displays the time of the last full read and the number of known track IDs. This timestamp is not a guarantee that the playlist is still unchanged. Click **Refresh playlist data** after editing the playlist manually, from another tab, or on another device. Refresh discards the old cache entry and collected plan, reads the destination in full, and requires another collection before adding. If refresh fails, the previous entry is not reused.
+
+If a write fails or its response does not confirm every submitted ID, the affected cache entry is discarded. Collecting again then requires a full read to reconcile possible partial additions. Stopping between confirmed batches preserves the updated cache; a batch already in flight can still complete. No cache is saved to disk, and there is no automatic background synchronization or expiry. Changes made elsewhere remain invisible until a manual refresh or page reload.
 
 ### Interface reference
 
 | English control | Meaning |
 | --- | --- |
+| Refresh playlist data | Read the destination again and clear the collected plan |
 | Language / Мова | Switch between English and Ukrainian |
 | ADD ALL TO PLAYLIST | Open or close the bulk-add panel |
 | Playlist URL or ID | Destination playlist URL or ID |
@@ -85,13 +94,13 @@ Tracks identified as audio songs are accepted. Tracks explicitly identified as m
 
 Duplicate detection uses the exact YouTube track/video ID. An ID found in several releases is collected once, and an ID already present in the destination is excluded. Different IDs remain separate even when their titles or recordings are identical. Remasters, live recordings, alternate editions, and a music-video version of a song may therefore coexist. Existing duplicates in the destination are not removed.
 
-Tracks are submitted in order of first discovery. The script does not sort existing entries or impose chronological album order. Their final placement also depends on the playlist's settings. Avoid running simultaneous additions to the same destination: the final pre-add scan is not a lock against edits from other tabs.
+Tracks are submitted in order of first discovery. The script does not sort existing entries or impose chronological album order. Their final placement also depends on the playlist's settings. Avoid running simultaneous additions to the same destination: the cache does not detect changes made in other tabs or on other devices.
 
 ## Troubleshooting
 
 ### The button does not appear
 
-Confirm that you are on `music.youtube.com`, that Tampermonkey is allowed to run there, and that the script is enabled. Reload the page after installation or an update. Try **Alt+Shift+P**. In Firefox, open the web console with **Ctrl+Shift+K** and look for `[YTM Bulk Add 3.1.0]` or an error referring to the userscript. The startup message indicates that panel initialization completed; it does not confirm that catalog requests will succeed.
+Confirm that you are on `music.youtube.com`, that Tampermonkey is allowed to run there, and that the script is enabled. Reload the page after installation or an update. Try **Alt+Shift+P**. In Firefox, open the web console with **Ctrl+Shift+K** and look for `[YTM Bulk Add 3.2.0]` or an error referring to the userscript. The startup message indicates that panel initialization completed; it does not confirm that catalog requests will succeed.
 
 ### The artist cannot be recognized or no songs are found
 
@@ -103,11 +112,11 @@ Verify that the destination is a regular `PL…` playlist and that you can manua
 
 The script handles an empty playlist when its recognized track-list response omits the item array. Other response layouts can still fail. If an empty test playlist produces a missing-items error, adding one song manually and scanning again is a practical workaround observed during development.
 
-### Rate limits, unexpected responses, or incomplete verification
+### Rate limits, unexpected responses, or unconfirmed additions
 
 For HTTP 429, stop and try again later. The script spaces requests approximately 900 milliseconds apart and uses a 45-second timeout, but these settings do not guarantee that YouTube will accept every request.
 
-An unknown-list or continuation error means the parser could not reliably read the response. A failed acknowledgement or verification can occur after some tracks have already been added. Check the destination and collect again before another attempt.
+An unknown-list or continuation error means the parser could not reliably read the response. A failed acknowledgement can occur after some tracks have already been added. Check the destination and collect again before another attempt.
 
 When reporting a problem, include the script version, browser and Tampermonkey versions, artist URL, relevant log text, and whether the destination was empty. Do not include cookies or Authorization headers. Review exported JSON before sharing it: it contains playlist and artist IDs, song information, and log entries.
 
@@ -122,11 +131,11 @@ node --check 'YouTube Music Bulk Add to Playlist Pro-2.0.user.js'
 node tests/youtube-music-bulk-add.test.cjs
 ```
 
-A syntax check does not verify live YouTube Music compatibility. The included tests use simulated browser and server responses to check collection, pagination, duplicate handling, writes, language switching, and preference storage. They do not access a live YouTube account.
+A syntax check does not verify live YouTube Music compatibility. The included tests use simulated browser and server responses to check collection, pagination, duplicate handling, writes, cache reuse and invalidation, account and playlist isolation, language switching, and preference storage. They do not access a live YouTube account.
 
 ## Session data and implementation
 
-Requests go to `/youtubei/v1/` on `music.youtube.com` using the current browser session. The script reads session cookies locally to construct its authentication header. It does not send data to a separate service or include authentication credentials in its JSON export. Only the language preference is saved automatically in local storage. Collection results and the log are held in memory until the page is reloaded, unless you download an export.
+Requests go to `/youtubei/v1/` on `music.youtube.com` using the current browser session. The script reads session cookies locally to construct its authentication header. It does not send data to a separate service or include authentication credentials in its JSON export. Only the language preference is saved automatically in local storage. Playlist caches, collection results, and the log are held in memory until the page is reloaded, unless you download an export.
 
 The implementation uses internal endpoints rather than the public YouTube Data API. It reuses configuration supplied by the page, including its client key when available; users do not need to supply a separate key. Endpoint and response formats were checked against [ytmusicapi](https://github.com/sigma67/ytmusicapi) and [YouTube.js](https://github.com/LuanRT/YouTube.js). Neither library is a runtime dependency. This is an independent project and is not affiliated with YouTube or Google.
 

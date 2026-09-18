@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Music Bulk Add to Playlist Pro
 // @namespace    http://tampermonkey.net/
-// @version      3.1.0
+// @version      3.2.0
 // @description  Collect artist songs, albums and singles, check duplicates, and add them to a playlist.
 // @description:uk Збирає пісні, альбоми й сингли виконавця, перевіряє дублікати та додає до плейлиста.
 // @author       Geronimo
@@ -237,21 +237,41 @@
         "uk": "Підтверджено {0}/{1}.",
         "en": "Confirmed {0}/{1}."
     },
-    "verificationMissing": {
-        "uk": "Під час повторної перевірки не знайдено {0} треків. Оновлення може ще оброблятися.",
-        "en": "Verification could not find {0} tracks. The update may still be processing."
-    },
     "finished": {
-        "uk": "Готово! Додано й перевірено: {0}. Уже були перед додаванням: {1}.\nОнови сторінку цільового плейлиста, щоб побачити зміни.",
-        "en": "Done! Added and verified: {0}. Already present before adding: {1}.\nRefresh the destination playlist to see the changes."
-    },
-    "verified": {
-        "uk": "Повторна перевірка плейлиста завершена.",
-        "en": "Playlist verification completed."
+        "en": "Done! Server-confirmed additions: {0}. Already present: {1}.\nRefresh the destination playlist to see changes.",
+        "uk": "Готово! Сервер підтвердив додавання: {0}. Уже були: {1}.\nОнови сторінку цільового плейлиста, щоб побачити зміни."
     },
     "startup": {
-        "uk": "[YTM Bulk Add 3.1.0] Панель запущено. Alt+Shift+P відкриває її.",
-        "en": "[YTM Bulk Add 3.1.0] Panel initialized. Alt+Shift+P opens it."
+        "uk": "[YTM Bulk Add 3.2.0] Панель запущено. Alt+Shift+P відкриває її.",
+        "en": "[YTM Bulk Add 3.2.0] Panel initialized. Alt+Shift+P opens it."
+    },
+    "refresh": {
+        "en": "Refresh playlist data",
+        "uk": "Оновити дані плейлиста"
+    },
+    "cacheNone": {
+        "en": "Playlist data has not been loaded.",
+        "uk": "Дані плейлиста ще не завантажено."
+    },
+    "cacheInfo": {
+        "en": "Last full read: {0}. Known track IDs: {1}.",
+        "uk": "Останнє повне читання: {0}. Відомих ID треків: {1}."
+    },
+    "cacheHint": {
+        "en": "After editing this playlist elsewhere, refresh its data before collecting songs.",
+        "uk": "Після змін плейлиста в іншій вкладці чи на іншому пристрої онови його дані перед збиранням."
+    },
+    "cacheReuse": {
+        "en": "Using cached playlist data: {0}.",
+        "uk": "Використовую кеш плейлиста: {0}."
+    },
+    "cacheReset": {
+        "en": "Playlist cache discarded: the last write could not be confirmed.",
+        "uk": "Кеш плейлиста скинуто: останній запис не вдалося підтвердити."
+    },
+    "cacheRefreshed": {
+        "en": "Playlist data refreshed. Collect songs to build a new plan.",
+        "uk": "Дані плейлиста оновлено. Збери пісні для нового списку."
     }
 };
     function t(key, ...args) { return { key, args }; }
@@ -431,6 +451,23 @@
     if (window.top !== window.self || document.getElementById('ytm-bulk-add-pro')) return;
 
     const state = { busy: false, stop: false, plan: null, logs: [], confirmed: 0 };
+    const playlistCache = new Map();
+    const cacheKey = (account, id) => JSON.stringify([account, id]);
+    async function cachedPlaylist(id, api, account) {
+        assertIdentity(account);
+        const key = cacheKey(account, id);
+        if (playlistCache.has(key)) {
+            log(t('cacheReuse', id));
+            return playlistCache.get(key);
+        }
+        const data = await playlistTracks(id, api);
+        check();
+        assertIdentity(account);
+        const entry = { ...data, readAt: new Date() };
+        playlistCache.set(key, entry);
+        updateCacheInfo();
+        return entry;
+    }
     function check() { if (state.stop) throw new LocalizedError(t('stopped')); }
     function config(key) { return window.ytcfg?.get?.(key) ?? window.ytcfg?.data_?.[key]; }
     function identity() {
@@ -658,6 +695,9 @@
     element('button', { id: 'stop', type: 'button', class: 'secondary', disabled: '' }, t('stop'), actions);
     element('p', { id: 'status', role: 'status', 'aria-live': 'polite' }, t('ready'), panel);
     element('a', { id: 'playlist', target: '_blank', rel: 'noopener' }, t('openPlaylist'), panel);
+    element('button', { id: 'refresh', type: 'button', class: 'secondary' }, t('refresh'), panel);
+    element('p', { id: 'cache-info' }, '', panel);
+    element('small', {}, t('cacheHint'), panel);
     element('ol', { id: 'preview' }, '', panel);
     const exports = element('div', { class: 'row' }, '', panel);
     element('button', { id: 'export', type: 'button', class: 'secondary', disabled: '' }, t('export'), exports);
@@ -688,6 +728,7 @@
         host.setAttribute('lang', language);
         for (const [node, message] of bindings) node.textContent = render(message);
         $('log').textContent = formattedLogs().join('\n');
+        updateCacheInfo();
     }
     $('language').value = language;
     $('language').onchange = () => {
@@ -699,11 +740,19 @@
         state.logs.push({ time: new Date(), message });
         $('log').textContent = formattedLogs().join('\n');
     }
+    function updateCacheInfo() {
+        let entry;
+        try { entry = playlistCache.get(cacheKey(identity(), parsePlaylist($('target').value))); } catch { /* Invalid input. */ }
+        setText($('cache-info'), entry
+            ? t('cacheInfo', entry.readAt.toLocaleString(language === 'uk' ? 'uk-UA' : 'en-US'), entry.tracks.size)
+            : t('cacheNone'));
+    }
     function updateLink() {
         try { $('playlist').href = `https://music.youtube.com/playlist?list=${parsePlaylist($('target').value)}`; }
         catch { $('playlist').removeAttribute('href'); }
     }
     function controls() {
+        $('refresh').disabled = state.busy;
         $('scan').disabled = state.busy;
         $('target').disabled = state.busy;
         $('versions').disabled = state.busy;
@@ -716,6 +765,7 @@
         $('preview').replaceChildren();
         controls();
         updateLink();
+        updateCacheInfo();
     }
     async function run(task) {
         if (state.busy) return;
@@ -738,6 +788,16 @@
         status(t('stopping'));
         controls();
     };
+    $('refresh').onclick = () => run(async () => {
+        invalidate();
+        state.confirmed = 0;
+        const id = parsePlaylist($('target').value);
+        const account = identity();
+        playlistCache.delete(cacheKey(account, id));
+        updateCacheInfo();
+        await cachedPlaylist(id, makeApi(account), account);
+        status(t('cacheRefreshed'));
+    });
     $('scan').onclick = () => run(async () => {
         invalidate();
         state.confirmed = 0;
@@ -748,7 +808,7 @@
         status(t('resolving'));
         const browseId = await resolveArtist(artistUrl, api);
         log(t('collectionStart', browseId));
-        const existing = await playlistTracks(playlistId, api);
+        const existing = await cachedPlaylist(playlistId, api, account);
         const artist = await collectArtist(browseId, api, $('versions').checked);
         check();
         const pending = artist.songs.filter(song => !existing.tracks.has(song.id));
@@ -767,29 +827,36 @@
         if (!plan?.pending.length) return;
         assertIdentity(plan.account);
         const api = makeApi(plan.account);
-        // Re-read every page immediately before writing, including songs added in another tab.
-        const existing = await playlistTracks(plan.playlistId, api);
+        // Reuse the account-specific snapshot and server-confirmed additions.
+        const existing = await cachedPlaylist(plan.playlistId, api, plan.account);
         const pending = plan.pending.filter(song => !existing.tracks.has(song.id));
         state.confirmed = 0;
         for (let offset = 0; offset < pending.length; offset += BATCH_SIZE) {
             check();
             const ids = pending.slice(offset, offset + BATCH_SIZE).map(song => song.id);
             status(t('adding', plan.playlistTitle, state.confirmed, pending.length));
-            const response = await api('browse/edit_playlist', {
-                playlistId: plan.playlistId,
-                actions: ids.map(id => ({ action: 'ACTION_ADD_VIDEO', addedVideoId: id })),
-            });
-            addedIds(response, ids);
+            try {
+                const response = await api('browse/edit_playlist', {
+                    playlistId: plan.playlistId,
+                    actions: ids.map(id => ({ action: 'ACTION_ADD_VIDEO', addedVideoId: id })),
+                });
+                addedIds(response, ids);
+                assertIdentity(plan.account);
+            } catch (error) {
+                playlistCache.delete(cacheKey(plan.account, plan.playlistId));
+                updateCacheInfo();
+                log(t('cacheReset'));
+                throw error;
+            }
+            for (const id of ids) existing.tracks.add(id);
+            updateCacheInfo();
             state.confirmed += ids.length;
             log(t('confirmed', state.confirmed, pending.length));
         }
         check();
-        const verified = await playlistTracks(plan.playlistId, api);
-        const missing = pending.filter(song => !verified.tracks.has(song.id));
-        if (missing.length) throw new LocalizedError(t('verificationMissing', missing.length));
         plan.pending = [];
         status(t('finished', state.confirmed, plan.songs.length - pending.length));
-        log(t('verified'));
+
     });
     $('export').onclick = () => {
         if (!state.plan) return;
